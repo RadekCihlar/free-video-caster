@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stream Scout Player</title><link rel="stylesheet" href="player.css"></head>
+  <body>
+    <main>
+      <header><a href="popup.html" class="mark" aria-label="Stream Scout"><img src="icon32.png" alt="" width="32" height="32"></a><div><h1 id="title">Stream Scout</h1><p id="source">Preparing your stream…</p></div></header>
+      <section class="stage">
+        <video id="video" controls playsinline></video>
+        <div id="empty-state" class="empty-state"><span class="empty-play" aria-hidden="true">&#9654;</span><strong>Ready to play</strong><span>Watch here, or cast it to your TV</span></div>
+        <iframe id="cast-frame" src="cast-frame.html" allow="presentation" title="Cast to TV"></iframe>
+        <button id="device" type="button" class="device hidden">Play on device</button>
+        <div id="loading" class="loading hidden">Preparing your stream…</div>
+      </section>
+      <section class="bar" aria-label="Playback on this PC">
+        <label id="quality-wrap" class="hidden"><span>Quality</span><select id="quality"></select></label>
+        <span id="quality-state" class="state"><span>Quality</span><b>Single source</b></span>
+        <label id="subtitles-wrap" class="hidden"><span>Subtitles</span><select id="subtitles"></select></label>
+        <span id="subtitles-state" class="state"><span>Subtitles</span><b>None found</b></span>
+        <label><span>Speed</span><select id="speed"></select></label>
+        <span id="cast-off" class="state hidden" title="Casting needs Chromecast support, as in Chrome, Edge and Opera. In Opera, turn on Chromecast in settings."><span>Cast</span><b>Not available in this browser</b></span>
+      </section>
+      <section id="tv" class="tv hidden" aria-label="TV">
+        <div class="tv-head">
+          <span class="tv-kicker">Playing on</span>
+          <strong id="cast-device">your TV</strong>
+          <span id="cast-state"></span>
+        </div>
+        <div class="tv-seek">
+          <span id="remote-current">0:00</span>
+          <input id="remote-seek" type="range" min="0" max="0" value="0" aria-label="Position on TV">
+          <span id="remote-duration">0:00</span>
+        </div>
+        <div class="tv-controls">
+          <button id="remote-play" type="button" class="remote-play">Pause</button>
+          <label><span>Subtitles</span><select id="remote-subtitle"></select></label>
+          <label><span>Speed</span><select id="remote-speed"></select></label>
+          <button id="remote-disconnect" type="button" class="remote-stop">Stop casting</button>
+        </div>
+      </section>
+      <div class="toasts">
+        <div id="error" class="toast hidden" role="alert"><span id="error-text"></span><button type="button" class="toast-close" aria-label="Dismiss">&times;</button></div>
+        <p id="note" class="toast hidden" role="status"></p>
+      </div>
+    </main>
+    <script src="cast-media.js"></script>
+    <script src="player.js"></script>
+  </body>
+</html>
