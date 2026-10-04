@@ -102,6 +102,11 @@ let deviceNearby = false;
 const SPEED_REFUSED = 'Your TV does not support speed changes.';
 let seeking = false;
 let speedRefusedUntil = 0;
+const remoteVolume = document.querySelector('#remote-volume');
+let changingVolume = false;
+let volumeSentAt = 0;
+let castTime = 0;
+let castDuration = 0;
 
 function toFrame(message) { castFrame.contentWindow?.postMessage({ source: TAG, dir: 'to-page', ...message }, '*'); }
 function castLoad() {
@@ -113,6 +118,7 @@ function syncCast() { if (item) toFrame({ type: 'load', ...castLoad() }); }
 function castCommand(name, value) { toFrame({ type: 'command', name, value }); }
 // Range inputs have no cross-browser "filled" style, so the played part is painted as a background.
 function paintSeek() { remoteSeek.style.setProperty('--fill', `${(Number(remoteSeek.value) / (Number(remoteSeek.max) || 1)) * 100}%`); }
+function paintVolume() { remoteVolume.style.setProperty('--fill', `${remoteVolume.value}%`); }
 
 // Without Cast, the browser's own remote playback (AirPlay in Safari) takes the Cast button's place.
 function renderDevice() {
@@ -131,13 +137,29 @@ function renderCast(status = {}) {
   note.textContent = alert;
   note.classList.toggle('hidden', !alert);
   if (!live) return;
+  const finished = status.state === 'idle';
+  // The TV reports no position once a video ends, so the bar stays full at the last known length.
+  if (status.duration) castDuration = status.duration;
+  castTime = finished ? castDuration : status.currentTime || 0;
   document.querySelector('#cast-device').textContent = status.device;
-  document.querySelector('#cast-state').textContent = status.state === 'buffering' ? 'Buffering…' : status.state === 'idle' ? 'Finished' : status.paused ? 'Paused' : status.title || '';
-  document.querySelector('#remote-play').textContent = status.paused ? 'Play' : 'Pause';
-  document.querySelector('#remote-current').textContent = StreamScoutMedia.clock(status.currentTime);
-  document.querySelector('#remote-duration').textContent = StreamScoutMedia.clock(status.duration);
-  remoteSeek.max = String(Math.floor(status.duration || 0));
-  if (!seeking) remoteSeek.value = String(Math.floor(status.currentTime || 0));
+  document.querySelector('#cast-title').textContent = status.title || (item ? StreamScoutMedia.titleFor(item) : '');
+  const state = document.querySelector('#cast-state');
+  state.textContent = status.state === 'buffering' ? 'Buffering…' : finished ? 'Finished' : status.paused ? 'Paused' : 'Playing';
+  state.classList.toggle('live', status.state === 'playing' && !status.paused);
+  const mode = finished ? 'replay' : status.paused ? 'play' : 'pause';
+  const play = document.querySelector('#remote-play');
+  play.dataset.mode = mode;
+  play.setAttribute('aria-label', { replay: 'Play again', play: 'Play', pause: 'Pause' }[mode]);
+  document.querySelector('#remote-current').textContent = StreamScoutMedia.clock(castTime);
+  document.querySelector('#remote-duration').textContent = StreamScoutMedia.clock(castDuration);
+  document.querySelector('#tv-volume').classList.toggle('hidden', status.canVolume === false);
+  const mute = document.querySelector('#remote-mute');
+  mute.setAttribute('aria-pressed', String(Boolean(status.muted)));
+  mute.setAttribute('aria-label', status.muted ? 'Unmute TV' : 'Mute TV');
+  if (!changingVolume && typeof status.volume === 'number') { remoteVolume.value = String(Math.round(status.muted ? 0 : status.volume * 100)); paintVolume(); }
+  for (const control of [remoteSeek, document.querySelector('#remote-back'), document.querySelector('#remote-forward')]) control.disabled = finished;
+  remoteSeek.max = String(Math.floor(castDuration));
+  if (!seeking) remoteSeek.value = String(Math.floor(castTime));
   paintSeek();
   if (document.activeElement !== remoteSpeed) remoteSpeed.value = String(status.rate || 1);
   // Status arrives every second; rebuilding the open select would close it and undo the pick.
@@ -152,6 +174,8 @@ function renderCast(status = {}) {
 window.addEventListener('message', event => {
   const data = event.data;
   if (event.source !== castFrame.contentWindow || data?.source !== TAG || data.dir !== 'to-ext') return;
+  // The frame asks for a fresh copy when the cast library holds on to a dead TV connection.
+  if (data.type === 'reset') castFrame.src = castFrame.src;
   if (data.type === 'clicked') chrome.runtime.sendMessage({ type: 'castClaim', load: castLoad() }).catch(cause => showError(cause.message));
   if (data.type === 'status') {
     renderCast(data.status);
@@ -163,8 +187,18 @@ chrome.runtime.onMessage.addListener(message => { if (message.type === 'castToPa
 castFrame.addEventListener('load', syncCast);
 quality.addEventListener('change', syncCast);
 subtitles.addEventListener('change', syncCast);
-document.querySelector('#remote-play').addEventListener('click', () => castCommand('playPause'));
-document.querySelector('#remote-disconnect').addEventListener('click', () => castCommand('disconnect'));
+document.querySelector('#remote-play').addEventListener('click', event => castCommand(event.currentTarget.dataset.mode === 'replay' ? 'replay' : 'playPause'));
+const skip = seconds => castCommand('seek', Math.min(Math.max(castTime + seconds, 0), castDuration || Infinity));
+document.querySelector('#remote-back').addEventListener('click', () => skip(-10));
+document.querySelector('#remote-forward').addEventListener('click', () => skip(30));
+document.querySelector('#remote-disconnect').addEventListener('click', () => { castCommand('disconnect'); tv.classList.add('hidden'); });
+document.querySelector('#remote-mute').addEventListener('click', () => castCommand('mute'));
+// Dragging fires many input events; the TV gets at most a few volume changes a second, then the final one.
+remoteVolume.addEventListener('input', () => {
+  changingVolume = true; paintVolume();
+  if (Date.now() - volumeSentAt > 200) { volumeSentAt = Date.now(); castCommand('volume', Number(remoteVolume.value) / 100); }
+});
+remoteVolume.addEventListener('change', () => { changingVolume = false; castCommand('volume', Number(remoteVolume.value) / 100); });
 remoteSubtitle.addEventListener('change', () => castCommand('subtitle', Number(remoteSubtitle.value)));
 remoteSeek.addEventListener('input', () => { seeking = true; paintSeek(); });
 remoteSpeed.addEventListener('change', () => castCommand('speed', Number(remoteSpeed.value)));

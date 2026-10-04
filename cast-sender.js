@@ -2,11 +2,29 @@
   const TAG = 'stream-scout';
   // Google's Cast library, bundled unchanged; the sender script loads first and defines chrome.cast for the framework.
   const SDK = ['vendor/cast/cast_sender.js', 'vendor/cast/cast_framework.js'];
-  let context, player, controller, pending, sdk, lastTimePost = 0;
+  let context, player, controller, pending, sdk, loading = false, lastTimePost = 0;
 
   // The sandboxed cast frame has an opaque origin, so a named target origin would drop the message.
   const post = status => window.postMessage({ source: TAG, dir: 'to-ext', type: 'status', status }, '*');
   const errorCode = error => (typeof error === 'string' ? error : error?.code) || 'unknown';
+  // The browser hands over a TV connection while it is still connecting, and the bundled sender writes to it at once,
+  // which throws and fails the session before the video is sent. The sender gets the connection once it is open.
+  const whenOpen = connection => connection.state !== 'connecting' ? connection : new Promise(resolve => {
+    for (const type of ['connect', 'close', 'terminate']) connection.addEventListener(type, () => resolve(connection), { once: true });
+  });
+  for (const name of window.PresentationRequest ? ['start', 'reconnect'] : []) {
+    const original = PresentationRequest.prototype[name];
+    PresentationRequest.prototype[name] = function (...args) {
+      return original.apply(this, args).then(connection => {
+        // The bundled sender keeps a session whose connection has ended and goes on writing to it,
+        // so the player starts the frame over before the next cast can reuse it. A sandbox page cannot reload itself.
+        for (const type of ['close', 'terminate']) connection.addEventListener(type, () => setTimeout(() => {
+          if (context?.getCurrentSession()) window.postMessage({ source: TAG, dir: 'to-ext', type: 'reset' }, '*');
+        }, 300), { once: true });
+        return whenOpen(connection);
+      });
+    };
+  }
 
   function script(src) {
     return new Promise((resolve, reject) => {
@@ -48,8 +66,10 @@
   function status() {
     if (!player?.isConnected) return { state: 'disconnected' };
     const session = context.getCurrentSession();
+    const state = window.StreamScoutMedia.playerStateFor(player.playerState, session?.getMediaSession()?.idleReason);
     return {
-      state: window.StreamScoutMedia.playerStateFor(player.playerState, session?.getMediaSession()?.idleReason),
+      // Before the first load lands the TV reports idle, which would otherwise read as a finished video.
+      state: loading && state === 'idle' ? 'buffering' : state,
       device: session?.getCastDevice().friendlyName || '',
       title: player.mediaInfo?.metadata?.title || '',
       currentTime: player.currentTime || 0,
@@ -57,12 +77,16 @@
       paused: Boolean(player.isPaused),
       tracks: (player.mediaInfo?.tracks || []).filter(track => track.type === chrome.cast.media.TrackType.TEXT).map(track => ({ trackId: track.trackId, name: track.name })),
       activeTrackIds: session?.getMediaSession()?.activeTrackIds || [],
-      rate: session?.getMediaSession()?.playbackRate || 1
+      rate: session?.getMediaSession()?.playbackRate || 1,
+      volume: player.volumeLevel ?? 1,
+      muted: Boolean(player.isMuted),
+      canVolume: player.canControlVolume !== false
     };
   }
 
   async function start() {
     const spec = pending;
+    loading = true;
     try {
       if (!context.getCurrentSession()) await context.requestSession();
       const info = new chrome.cast.media.MediaInfo(spec.url, spec.contentType);
@@ -82,8 +106,10 @@
       const request = new chrome.cast.media.LoadRequest(info);
       request.activeTrackIds = spec.activeTrackIds;
       await context.getCurrentSession().loadMedia(request);
+      loading = false;
       post(status());
     } catch (error) {
+      loading = false;
       const code = errorCode(error);
       post(code === chrome.cast.ErrorCode.CANCEL ? { state: 'cancelled' } : { state: 'error', error: String(error?.description || code) });
     }
@@ -122,9 +148,17 @@
   function command(name, value) {
     if (!player?.isConnected) return post(status());
     if (name === 'playPause') controller.playOrPause();
+    // A finished video has no media session left to resume, so it is loaded again on the connected TV.
+    if (name === 'replay' && pending) start();
     if (name === 'seek') { player.currentTime = Number(value) || 0; controller.seek(); }
     if (name === 'stop') controller.stop();
-    if (name === 'disconnect') context.endCurrentSession(true);
+    // The player may not report the dropped connection, so the page hears it from here.
+    if (name === 'disconnect') {
+      context.endCurrentSession(true);
+      return post({ state: 'disconnected' });
+    }
+    if (name === 'volume') { player.volumeLevel = Math.min(Math.max(Number(value) || 0, 0), 1); controller.setVolumeLevel(); if (player.isMuted) controller.muteOrUnmute(); }
+    if (name === 'mute') controller.muteOrUnmute();
     if (name === 'subtitle') {
       const request = new chrome.cast.media.EditTracksInfoRequest(Number(value) ? [Number(value)] : []);
       context.getCurrentSession()?.getMediaSession()?.editTracksInfo(request, () => post(status()), error => post({ ...status(), error: String(errorCode(error)) }));

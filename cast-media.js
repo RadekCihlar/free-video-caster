@@ -53,6 +53,10 @@
       try { return `${new Intl.DisplayNames([locale], { type: 'language' }).of(language)} subtitles`; }
       catch { return `${language} subtitles`; }
     }
+    let filename = '';
+    try { filename = decodeURIComponent(url?.pathname.split('/').pop() || ''); } catch { filename = url?.pathname.split('/').pop() || ''; }
+    filename = filename.replace(/\.(vtt|srt|ass|ssa|ttml|dfxp)$/i, '').replace(/[._-]+/g, ' ').trim();
+    if (good(filename)) return filename;
     return `Subtitle track ${index + 1}`;
   }
 
