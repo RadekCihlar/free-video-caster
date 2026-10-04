@@ -84,7 +84,9 @@
     };
   }
 
-  async function start() {
+  const textStyle = style => Object.assign(new chrome.cast.media.TextTrackStyle(), style);
+
+  async function start(at = 0) {
     const spec = pending;
     loading = true;
     try {
@@ -103,9 +105,18 @@
         track.language = item.language;
         return track;
       });
+      if (spec.style) info.textTrackStyle = textStyle(spec.style);
       const request = new chrome.cast.media.LoadRequest(info);
       request.activeTrackIds = spec.activeTrackIds;
+      request.currentTime = at;
       await context.getCurrentSession().loadMedia(request);
+      // Some receivers start a stream at the beginning whatever the load asked for, so the spot is sought again.
+      const media = context.getCurrentSession()?.getMediaSession();
+      if (at > 2 && media && media.getEstimatedTime() < at - 2) {
+        const seek = new chrome.cast.media.SeekRequest();
+        seek.currentTime = at;
+        media.seek(seek, () => post(status()), error => post({ ...status(), error: String(errorCode(error)) }));
+      }
       loading = false;
       post(status());
     } catch (error) {
@@ -150,6 +161,8 @@
     if (name === 'playPause') controller.playOrPause();
     // A finished video has no media session left to resume, so it is loaded again on the connected TV.
     if (name === 'replay' && pending) start();
+    // A subtitle file added on the PC reaches the TV only with a fresh load, which carries on from the same spot.
+    if (name === 'reload' && value?.item?.url) { pending = window.StreamScoutMedia.buildMedia(value.item, Number(value.subtitleIndex) || 0); start(Number(value.at) || player.currentTime || 0); }
     if (name === 'seek') { player.currentTime = Number(value) || 0; controller.seek(); }
     if (name === 'stop') controller.stop();
     // The player may not report the dropped connection, so the page hears it from here.
@@ -162,6 +175,11 @@
     if (name === 'subtitle') {
       const request = new chrome.cast.media.EditTracksInfoRequest(Number(value) ? [Number(value)] : []);
       context.getCurrentSession()?.getMediaSession()?.editTracksInfo(request, () => post(status()), error => post({ ...status(), error: String(errorCode(error)) }));
+    }
+    if (name === 'style' && value) {
+      if (pending) pending.style = value;
+      const media = context.getCurrentSession()?.getMediaSession();
+      media?.editTracksInfo(new chrome.cast.media.EditTracksInfoRequest(media.activeTrackIds || [], textStyle(value)), () => post(status()), error => post({ ...status(), error: String(errorCode(error)) }));
     }
     if (name === 'speed') setSpeed(Number(value) || 1);
     if (name === 'status') post(status());

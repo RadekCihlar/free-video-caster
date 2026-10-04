@@ -1,6 +1,18 @@
 (root => {
   const CAST_SUBTITLE = /\.(vtt|ttml|dfxp)(?:[?#]|$)/i;
   const GENERIC = /^(?:file|index|track|subtitle|captions?|undefined|unknown)(?:\s*\d+)?$/i;
+  const CAST_DATA_LIMIT = 48 * 1024;
+  const SUBTITLE_BACKGROUND = { none: '#00000000', dim: '#000000A0', solid: '#000000FF' };
+  // The TV renders only generic font families, so the PC uses the nearest generic CSS family to match it.
+  const SUBTITLE_FONTS = {
+    sans: { label: 'Sans', css: 'system-ui, sans-serif', cast: 'SANS_SERIF' },
+    serif: { label: 'Serif', css: 'Georgia, serif', cast: 'SERIF' },
+    mono: { label: 'Monospace', css: 'Consolas, monospace', cast: 'MONOSPACED_SANS_SERIF' },
+    casual: { label: 'Casual', css: '"Comic Sans MS", "Segoe Print", cursive', cast: 'CASUAL' },
+    caps: { label: 'Small caps', css: 'system-ui, sans-serif', smallCaps: true, cast: 'SMALL_CAPITALS' }
+  };
+  // Subtitle files that are not UTF-8 are usually in the old Windows code page of their language.
+  const LEGACY = { 'windows-1250': ['cs', 'sk', 'pl', 'hu', 'sl', 'hr', 'bs', 'ro'], 'windows-1251': ['ru', 'uk', 'be', 'bg', 'mk'] };
 
   function typeFor(url, kind) {
     if (kind === 'hls' || /\.m3u8(?:[?#]|$)/i.test(url)) return 'application/x-mpegURL';
@@ -33,13 +45,62 @@
     return /\.(ttml|dfxp)(?:[?#]|$)/i.test(track.url) || /ttml/i.test(track.contentType || '') ? 'application/ttml+xml' : 'text/vtt';
   }
 
-  // The Default Media Receiver only renders WebVTT and TTML.
+  // The Default Media Receiver only renders WebVTT and TTML. A subtitle file added from this PC travels inside the
+  // load request as a data URL, and one cast message holds at most 64 KB, so larger files stay on the PC.
   function castableSubtitles(tracks = []) {
     const seen = new Map();
     for (const track of tracks) {
+      if (track?.url?.startsWith('data:') && track.url.length > CAST_DATA_LIMIT) continue;
       if (track?.url && (CAST_SUBTITLE.test(track.url) || /text\/vtt|ttml/i.test(track.contentType || '')) && !seen.has(track.url)) seen.set(track.url, track);
     }
     return [...seen.values()];
+  }
+
+  function decodeSubtitle(bytes, locale = globalThis.navigator?.language || 'en') {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch {
+      const language = String(locale).toLowerCase().split('-')[0];
+      const encoding = Object.keys(LEGACY).find(name => LEGACY[name].includes(language)) || 'windows-1252';
+      return new TextDecoder(encoding).decode(bytes);
+    }
+  }
+
+  // SRT differs from WebVTT in its header and in using a comma before the milliseconds.
+  function toWebVtt(text) {
+    const clean = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n').trim();
+    if (!clean.includes('-->')) throw new Error('No timed subtitle lines found.');
+    if (/^WEBVTT/.test(clean)) return `${clean}\n`;
+    const cues = clean.replace(/(\d+):(\d{2}):(\d{2})[,.](\d{1,3})/g, (_, h, m, s, ms) => `${h.padStart(2, '0')}:${m}:${s}.${ms.padEnd(3, '0')}`);
+    return `WEBVTT\n\n${cues}\n`;
+  }
+
+  // Moves the cue times of a WebVTT file; the receiver has no offset setting, so a shifted copy is cast instead.
+  function shiftVtt(vtt, seconds) {
+    if (!seconds) return vtt;
+    const stamp = value => {
+      const parts = value.split(':').map(Number);
+      const total = parts.reduce((sum, part) => sum * 60 + part, 0) + seconds;
+      const ms = Math.round(Math.max(0, total) * 1000);
+      const pad = (number, size = 2) => String(number).padStart(size, '0');
+      return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
+    };
+    return vtt.replace(/^((?:\d+:)?\d{2}:\d{2}\.\d{3}) --> ((?:\d+:)?\d{2}:\d{2}\.\d{3})/gm, (_, from, to) => `${stamp(from)} --> ${stamp(to)}`);
+  }
+
+  // Colors on the receiver are #RRGGBBAA. Without a background box the text needs a shadow to stay readable.
+  function castTextStyle(look) {
+    return {
+      fontScale: look.size, foregroundColor: `${look.color}FF`, backgroundColor: SUBTITLE_BACKGROUND[look.background] || SUBTITLE_BACKGROUND.dim,
+      edgeType: look.background === 'none' ? 'DROP_SHADOW' : 'NONE', edgeColor: '#000000FF',
+      fontGenericFamily: (SUBTITLE_FONTS[look.font] || SUBTITLE_FONTS.sans).cast
+    };
+  }
+
+  // The TV fetches subtitles itself and cannot reach a file on this PC, so the text goes along inside the URL.
+  function subtitleDataUrl(vtt) {
+    let binary = '';
+    for (const byte of new TextEncoder().encode(vtt)) binary += String.fromCharCode(byte);
+    return `data:text/vtt;charset=utf-8;base64,${btoa(binary)}`;
   }
 
   function subtitleName(track, index, locale = globalThis.navigator?.language || 'en') {
@@ -67,7 +128,7 @@
     let host = '';
     try { host = new URL(item.url).hostname; } catch { /* Shown as metadata only. */ }
     return {
-      url: item.url, contentType: typeFor(item.url, item.kind), title: titleFor(item), host, tracks,
+      url: item.url, contentType: typeFor(item.url, item.kind), title: titleFor(item), host, tracks, style: item.subtitleStyle || null,
       activeTrackIds: subtitleIndex > 0 && subtitleIndex <= tracks.length ? [subtitleIndex] : []
     };
   }
@@ -97,7 +158,7 @@
     return [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(value => ({ value, label: value === 1 ? 'Normal' : `${value}×` }));
   }
 
-  const api = { typeFor, pageTitle, titleFor, castableSubtitles, subtitleName, buildMedia, sdkFailure, playerStateFor, castSubtitleIndex, clock, speedOptions };
+  const api = { SUBTITLE_FONTS, typeFor, pageTitle, titleFor, castableSubtitles, decodeSubtitle, toWebVtt, shiftVtt, castTextStyle, subtitleDataUrl, subtitleName, buildMedia, sdkFailure, playerStateFor, castSubtitleIndex, clock, speedOptions };
   root.StreamScoutMedia = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

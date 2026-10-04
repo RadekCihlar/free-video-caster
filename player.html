@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stream Scout Player</title><link rel="stylesheet" href="player.css"></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stream Scout Player</title><link rel="stylesheet" href="player.css"><style id="cue-style"></style></head>
   <body>
     <main>
       <header><a href="popup.html" class="mark" aria-label="Stream Scout"><img src="icon32.png" alt="" width="32" height="32"></a><div><h1 id="title">Stream Scout</h1><p id="source">Preparing your stream…</p></div></header>
@@ -16,8 +16,29 @@
         <span id="quality-state" class="state"><span>Quality</span><b>Single source</b></span>
         <label id="subtitles-wrap" class="hidden"><span>Subtitles</span><select id="subtitles"></select></label>
         <span id="subtitles-state" class="state"><span>Subtitles</span><b>None found</b></span>
+        <span class="state"><span>Own subtitles</span><button id="subtitle-add" type="button" title="Add an .srt or .vtt file from this PC">Add file…</button></span>
+        <input id="subtitle-file" type="file" accept=".srt,.vtt" hidden>
+        <span id="subtitle-tune" class="state hidden"><span>Adjust</span><button id="subtitle-menu-toggle" type="button" aria-expanded="false" aria-controls="subtitle-menu">Timing &amp; look</button></span>
         <label><span>Speed</span><select id="speed"></select></label>
         <span id="cast-off" class="state hidden" title="Casting needs Chromecast support, as in Chrome, Edge and Opera. In Opera, turn on Chromecast in settings."><span>Cast</span><b>Not available in this browser</b></span>
+      </section>
+      <section id="subtitle-menu" class="sub-menu hidden" aria-label="Subtitle timing and look">
+        <div class="sub-timing">
+          <span class="sub-label">Timing</span>
+          <div class="sub-shift">
+            <div class="stepper" role="group" aria-label="Subtitle delay">
+              <button type="button" data-shift="-0.5" aria-label="Show subtitles 0.5 seconds earlier"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg>Earlier</button>
+              <label class="stepper-value"><input id="subtitle-shift" type="text" inputmode="decimal" value="0.0" autocomplete="off" spellcheck="false" aria-label="Subtitle delay in seconds"><span aria-hidden="true">s</span></label>
+              <button type="button" data-shift="0.5" aria-label="Show subtitles 0.5 seconds later">Later<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+            </div>
+            <button id="subtitle-shift-reset" type="button" class="sub-reset" disabled>Reset</button>
+          </div>
+          <p class="sub-hint">Steps of half a second. On the TV the video reloads at the same spot.</p>
+        </div>
+        <label><span>Font</span><select id="subtitle-font"></select></label>
+        <label><span>Size</span><select id="subtitle-size"></select></label>
+        <label><span>Color</span><select id="subtitle-color"></select></label>
+        <label><span>Background</span><select id="subtitle-background"></select></label>
       </section>
       <section id="tv" class="tv hidden" aria-label="TV remote">
         <div class="tv-top">

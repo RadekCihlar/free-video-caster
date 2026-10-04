@@ -31,7 +31,7 @@ No account, no server, no tracking. Everything runs in your browser.
 - **Finds streams as they load**, including ones the page fetches in the background, with a count on the toolbar icon.
 - **Quality picker** for HLS playlists, so you choose 1080p instead of whatever the page guessed.
 - **Real titles.** Videos are named after the tab, not after a meaningless file name.
-- **Subtitles** are collected from the page and sent to the TV with the video.
+- **Subtitles** are collected from the page and sent to the TV with the video. Add your own `.srt` or `.vtt` file, shift the timing in half-second steps, and pick the font, size, color and background for both the player and the TV.
 - **TV remote** in the player and in the popup: play and pause, seek, playback speed, switch subtitles, stop.
 - **Device detection.** The Cast button finds Chromecast and Google TV devices on your network. In browsers without Cast, a **Play on device** button (**AirPlay** in Safari) appears as soon as the browser sees a nearby device.
 - **Clear errors.** Problems show up as short messages in the top-right corner that say what went wrong.
@@ -106,14 +106,14 @@ No code is loaded from the internet. [PRIVACY.md](PRIVACY.md) lists exactly what
 | Permission | Why |
 | --- | --- |
 | Access to all sites, `webRequest` | Notice video and subtitle files as pages load them. |
-| `storage` | Keep the list of found streams for the current session. |
+| `storage` | Keep the list of found streams for the current session, and your subtitle look. |
 | `downloads` | Save a stream when you press Download. |
 
 ## Limits
 
 - **The TV fetches the stream itself.** Streams that only work with the browser's cookies or a specific referrer play in the browser but fail on the TV.
 - **Links expire.** Many streams use signed addresses that stop working after a while. If casting fails, reload the page and try again.
-- **Subtitle formats.** The player shows WebVTT subtitles, and only WebVTT and TTML can be cast. SRT tracks are not cast.
+- **Subtitle formats.** Only WebVTT and TTML can be cast. SRT tracks found on a page are not cast; an SRT file you add yourself is converted first. Added files over about 35 KB stay on the PC.
 - **Stream formats in the player.** Whether HLS and DASH play in the player tab depends on the browser's own support; casting them works regardless.
 - **Other TVs.** Smart TVs that only speak DLNA or a vendor protocol can't be reached from a browser extension.
 - **No DRM.** Protected streams cannot be played, cast or saved. Stream Scout does not extract keys or work around licence systems; use the service's own app or Cast button.

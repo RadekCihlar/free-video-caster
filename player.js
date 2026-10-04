@@ -42,22 +42,139 @@ function originalSubtitleLabel(track, index) {
   if (filename && informative(filename)) return filename;
   return `Subtitle track ${index + 1}`;
 }
+function showSubtitlePicker() {
+  document.querySelector('#subtitles-state').classList.add('hidden');
+  document.querySelector('#subtitles-wrap').classList.remove('hidden');
+  document.querySelector('#subtitle-tune').classList.remove('hidden');
+  if (!subtitles.options.length) subtitles.append(new Option('Off', ''));
+}
 function addTracks(tracks) {
   const usable = [...new Map((tracks || []).filter(track => track.url).map(track => [track.url, track])).values()];
   if (!usable.length) return;
-  document.querySelector('#subtitles-state').classList.add('hidden');
-  document.querySelector('#subtitles-wrap').classList.remove('hidden');
-  subtitles.append(new Option('Off', ''));
+  showSubtitlePicker();
   usable.forEach((track, index) => subtitles.append(new Option(subtitleLabel(track, index), track.url)));
-  subtitles.addEventListener('change', () => {
-    video.querySelectorAll('track').forEach(track => track.remove());
-    if (!subtitles.value) return;
-    const track = document.createElement('track'); track.kind = 'subtitles'; track.label = subtitles.options[subtitles.selectedIndex].text; track.src = subtitles.value; track.default = true;
-    track.addEventListener('load', () => { track.track.mode = 'showing'; });
-    track.addEventListener('error', () => showError(`Could not load subtitle track: ${track.label}.`));
-    video.append(track);
-  });
 }
+
+// Timing and look. A shifted track is a rewritten WebVTT copy, since neither the page nor the TV has an offset setting.
+const SUBTITLE_SIZES = [[0.75, 'Small'], [1, 'Normal'], [1.5, 'Large'], [2, 'Huge']];
+const SUBTITLE_COLORS = [['#FFFFFF', 'White'], ['#FFEB3B', 'Yellow'], ['#4DD0E1', 'Cyan'], ['#81C784', 'Green']];
+const SUBTITLE_BACKGROUNDS = [['none', 'None'], ['dim', 'Dim'], ['solid', 'Solid']];
+const SUBTITLE_FONTS = Object.entries(StreamScoutMedia.SUBTITLE_FONTS).map(([key, font]) => [key, font.label]);
+const subtitleSize = document.querySelector('#subtitle-size');
+const subtitleColor = document.querySelector('#subtitle-color');
+const subtitleBackground = document.querySelector('#subtitle-background');
+const subtitleFont = document.querySelector('#subtitle-font');
+const subtitleShiftInput = document.querySelector('#subtitle-shift');
+const subtitleTexts = new Map();
+let look = { size: 1, color: '#FFFFFF', background: 'dim', font: 'sans' };
+let subtitleShift = 0;
+let appliedShift = 0;
+let shiftedUrl = '';
+let shiftTimer;
+
+function subtitleText(url) {
+  if (!subtitleTexts.has(url)) {
+    const text = fetch(url).then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.arrayBuffer(); })
+      .then(bytes => StreamScoutMedia.toWebVtt(StreamScoutMedia.decodeSubtitle(new Uint8Array(bytes))));
+    text.catch(() => subtitleTexts.delete(url));
+    subtitleTexts.set(url, text);
+  }
+  return subtitleTexts.get(url);
+}
+async function showSubtitle() {
+  video.querySelectorAll('track').forEach(track => track.remove());
+  shiftedUrl = '';
+  const url = subtitles.value;
+  if (!url) return;
+  let src = url;
+  if (subtitleShift) {
+    try { src = shiftedUrl = StreamScoutMedia.subtitleDataUrl(StreamScoutMedia.shiftVtt(await subtitleText(url), subtitleShift)); }
+    catch (cause) { showError(`Could not shift these subtitles: ${cause.message}`); }
+    if (url !== subtitles.value) return;
+  }
+  const track = document.createElement('track'); track.kind = 'subtitles'; track.label = subtitles.options[subtitles.selectedIndex].text; track.src = src; track.default = true;
+  track.addEventListener('load', () => { track.track.mode = 'showing'; });
+  track.addEventListener('error', () => showError(`Could not load subtitle track: ${track.label}.`));
+  video.append(track);
+}
+// A new subtitle file or timing reaches the TV only with a fresh load; switching between loaded tracks does not need one,
+// unless the timing is shifted, since the TV holds a shifted copy of the previous track only.
+async function applySubtitles(reloadTv) {
+  await showSubtitle();
+  syncCast();
+  if (tv.classList.contains('hidden')) return;
+  if (reloadTv || (subtitleShift && subtitles.value)) castCommand('reload', { ...castLoad(), at: castTime });
+  else castCommand('subtitle', castLoad().subtitleIndex);
+}
+subtitles.addEventListener('change', () => applySubtitles(false));
+
+function paintLook() {
+  const shade = { none: 'transparent', dim: 'rgb(0 0 0 / 63%)', solid: 'black' }[look.background];
+  const shadow = look.background === 'none' ? '0 0 4px black, 0 1px 2px black' : 'none';
+  const font = StreamScoutMedia.SUBTITLE_FONTS[look.font] || StreamScoutMedia.SUBTITLE_FONTS.sans;
+  document.querySelector('#cue-style').textContent = `video::cue { color: ${look.color}; background-color: ${shade}; font-size: ${look.size * 100}%; font-family: ${font.css}; font-variant: ${font.smallCaps ? 'small-caps' : 'normal'}; text-shadow: ${shadow}; }`;
+}
+function setLook(change) {
+  look = { ...look, ...change };
+  paintLook();
+  chrome.storage.local.set({ subtitleLook: look }).catch(cause => showError(cause.message));
+  syncCast();
+  if (!tv.classList.contains('hidden')) castCommand('style', StreamScoutMedia.castTextStyle(look));
+}
+function setShift(seconds) {
+  subtitleShift = Math.round(Math.min(Math.max(seconds, -600), 600) * 10) / 10;
+  subtitleShiftInput.value = `${subtitleShift > 0 ? '+' : ''}${subtitleShift.toFixed(1)}`;
+  document.querySelector('#subtitle-shift-reset').disabled = !subtitleShift;
+  clearTimeout(shiftTimer);
+  // Waits for the clicks to settle, since each change reloads the video on the TV; no change, no reload.
+  shiftTimer = setTimeout(() => {
+    if (subtitleShift === appliedShift) return;
+    appliedShift = subtitleShift;
+    applySubtitles(true);
+  }, 700);
+}
+for (const [select, options, key] of [[subtitleSize, SUBTITLE_SIZES, 'size'], [subtitleColor, SUBTITLE_COLORS, 'color'], [subtitleBackground, SUBTITLE_BACKGROUNDS, 'background'], [subtitleFont, SUBTITLE_FONTS, 'font']]) {
+  options.forEach(([value, label]) => select.append(new Option(label, String(value))));
+  select.addEventListener('change', () => setLook({ [key]: key === 'size' ? Number(select.value) : select.value }));
+}
+document.querySelectorAll('[data-shift]').forEach(button => button.addEventListener('click', () => setShift(subtitleShift + Number(button.dataset.shift))));
+document.querySelector('#subtitle-shift-reset').addEventListener('click', () => setShift(0));
+// Typed values may use a decimal comma, a minus sign or a trailing "s".
+subtitleShiftInput.addEventListener('change', () => setShift(Number(subtitleShiftInput.value.replace(',', '.').replace('−', '-').replace(/\s*s$/i, '')) || 0));
+subtitleShiftInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') subtitleShiftInput.blur();
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setShift(subtitleShift + (event.key === 'ArrowUp' ? 0.1 : -0.1)); }
+});
+const subtitleMenuToggle = document.querySelector('#subtitle-menu-toggle');
+subtitleMenuToggle.addEventListener('click', () => {
+  const open = subtitleMenuToggle.getAttribute('aria-expanded') !== 'true';
+  subtitleMenuToggle.setAttribute('aria-expanded', String(open));
+  document.querySelector('#subtitle-menu').classList.toggle('hidden', !open);
+});
+chrome.storage.local.get('subtitleLook').then(({ subtitleLook }) => {
+  if (subtitleLook) look = { ...look, ...subtitleLook };
+  subtitleSize.value = String(look.size); subtitleColor.value = look.color; subtitleBackground.value = look.background; subtitleFont.value = look.font;
+  paintLook();
+}).catch(cause => showError(cause.message));
+
+const subtitleFile = document.querySelector('#subtitle-file');
+document.querySelector('#subtitle-add').addEventListener('click', () => subtitleFile.click());
+subtitleFile.addEventListener('change', async () => {
+  const file = subtitleFile.files[0];
+  subtitleFile.value = '';
+  if (!file || !item) return;
+  try {
+    const url = StreamScoutMedia.subtitleDataUrl(StreamScoutMedia.toWebVtt(StreamScoutMedia.decodeSubtitle(await file.arrayBuffer())));
+    const name = file.name.replace(/\.(srt|vtt)$/i, '').replace(/[._]+/g, ' ').trim();
+    const label = name.length > 48 ? `${name.slice(0, 47)}…` : name || 'Own subtitles';
+    item.subtitles = [...(item.subtitles || []), { url, label, contentType: 'text/vtt' }];
+    showSubtitlePicker();
+    subtitles.append(new Option(label, url));
+    subtitles.value = url;
+    await applySubtitles(true);
+    if (!StreamScoutMedia.castSubtitleIndex(item.subtitles, url)) showError('This subtitle file is too large to send to the TV, so it shows only here.');
+  } catch (cause) { showError(`Could not read ${file.name}: ${cause.message}`); }
+});
 async function boot() {
   const token = location.hash.slice(1);
   const stored = await chrome.storage.session.get(`player:${token}`);
@@ -111,7 +228,12 @@ let castDuration = 0;
 function toFrame(message) { castFrame.contentWindow?.postMessage({ source: TAG, dir: 'to-page', ...message }, '*'); }
 function castLoad() {
   const url = quality.value || item?.url;
-  return { item: { ...item, url, subtitles: item?.subtitles || [] }, subtitleIndex: StreamScoutMedia.castSubtitleIndex(item?.subtitles || [], subtitles.value) };
+  // A shifted copy too large for one cast message leaves the TV on the original timing.
+  const shifted = shiftedUrl && StreamScoutMedia.castableSubtitles([{ url: shiftedUrl, contentType: 'text/vtt' }]).length ? shiftedUrl : '';
+  // The TV lists tracks under the names this page shows, so both pickers read the same.
+  const named = (item?.subtitles || []).map(track => ({ ...track, label: [...subtitles.options].find(option => option.value === track.url)?.text || track.label }));
+  const tracks = named.map(track => (shifted && track.url === subtitles.value ? { ...track, url: shifted, contentType: 'text/vtt' } : track));
+  return { item: { ...item, url, subtitles: tracks, subtitleStyle: StreamScoutMedia.castTextStyle(look) }, subtitleIndex: StreamScoutMedia.castSubtitleIndex(tracks, shifted || subtitles.value) };
 }
 // The frame keeps the latest pick so its Cast button can start the session straight from the click.
 function syncCast() { if (item) toFrame({ type: 'load', ...castLoad() }); }
@@ -186,7 +308,6 @@ window.addEventListener('message', event => {
 chrome.runtime.onMessage.addListener(message => { if (message.type === 'castToPage' && message.payload?.type === 'command') castCommand(message.payload.name, message.payload.value); });
 castFrame.addEventListener('load', syncCast);
 quality.addEventListener('change', syncCast);
-subtitles.addEventListener('change', syncCast);
 document.querySelector('#remote-play').addEventListener('click', event => castCommand(event.currentTarget.dataset.mode === 'replay' ? 'replay' : 'playPause'));
 const skip = seconds => castCommand('seek', Math.min(Math.max(castTime + seconds, 0), castDuration || Infinity));
 document.querySelector('#remote-back').addEventListener('click', () => skip(-10));
@@ -199,7 +320,14 @@ remoteVolume.addEventListener('input', () => {
   if (Date.now() - volumeSentAt > 200) { volumeSentAt = Date.now(); castCommand('volume', Number(remoteVolume.value) / 100); }
 });
 remoteVolume.addEventListener('change', () => { changingVolume = false; castCommand('volume', Number(remoteVolume.value) / 100); });
-remoteSubtitle.addEventListener('change', () => castCommand('subtitle', Number(remoteSubtitle.value)));
+// A pick on the TV panel moves the page's picker too, which then switches the TV.
+remoteSubtitle.addEventListener('change', () => {
+  const id = Number(remoteSubtitle.value);
+  const url = id ? StreamScoutMedia.castableSubtitles(castLoad().item.subtitles)[id - 1]?.url : '';
+  if (url === undefined) return castCommand('subtitle', id);
+  if (!shiftedUrl || url !== shiftedUrl) subtitles.value = url;
+  applySubtitles(false);
+});
 remoteSeek.addEventListener('input', () => { seeking = true; paintSeek(); });
 remoteSpeed.addEventListener('change', () => castCommand('speed', Number(remoteSpeed.value)));
 for (const select of [speed, remoteSpeed]) select.append(...StreamScoutMedia.speedOptions().map(option => new Option(option.label, String(option.value))));
