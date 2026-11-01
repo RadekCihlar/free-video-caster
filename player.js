@@ -55,7 +55,7 @@ function addTracks(tracks) {
   usable.forEach((track, index) => subtitles.append(new Option(subtitleLabel(track, index), track.url)));
 }
 
-// Timing and look. A shifted track is a rewritten WebVTT copy, since neither the page nor the TV has an offset setting.
+// Timing and look. A shifted or lingering track is a rewritten WebVTT copy, since neither the page nor the TV has a timing setting.
 const SUBTITLE_SIZES = [[0.75, 'Small'], [1, 'Normal'], [1.5, 'Large'], [2, 'Huge']];
 const SUBTITLE_COLORS = [['#FFFFFF', 'White'], ['#FFEB3B', 'Yellow'], ['#4DD0E1', 'Cyan'], ['#81C784', 'Green']];
 const SUBTITLE_BACKGROUNDS = [['none', 'None'], ['dim', 'Dim'], ['solid', 'Solid']];
@@ -65,10 +65,16 @@ const subtitleColor = document.querySelector('#subtitle-color');
 const subtitleBackground = document.querySelector('#subtitle-background');
 const subtitleFont = document.querySelector('#subtitle-font');
 const subtitleShiftInput = document.querySelector('#subtitle-shift');
+const subtitleStretchInput = document.querySelector('#subtitle-stretch');
+const subtitleExtraInput = document.querySelector('#subtitle-extra');
+const subtitleGapInput = document.querySelector('#subtitle-gap');
 const subtitleTexts = new Map();
 let look = { size: 1, color: '#FFFFFF', background: 'dim', font: 'sans' };
 let subtitleShift = 0;
-let appliedShift = 0;
+let subtitleStretch = 0;
+let subtitleExtra = 0;
+let subtitleGap = 0;
+let appliedTiming = '0 0 0 0';
 let shiftedUrl = '';
 let shiftTimer;
 
@@ -81,15 +87,16 @@ function subtitleText(url) {
   }
   return subtitleTexts.get(url);
 }
+const retimed = () => Boolean(subtitleShift || subtitleStretch || subtitleExtra || subtitleGap);
 async function showSubtitle() {
   video.querySelectorAll('track').forEach(track => track.remove());
   shiftedUrl = '';
   const url = subtitles.value;
   if (!url) return;
   let src = url;
-  if (subtitleShift) {
-    try { src = shiftedUrl = StreamScoutMedia.subtitleDataUrl(StreamScoutMedia.shiftVtt(await subtitleText(url), subtitleShift)); }
-    catch (cause) { showError(`Could not shift these subtitles: ${cause.message}`); }
+  if (retimed()) {
+    try { src = shiftedUrl = StreamScoutMedia.subtitleDataUrl(StreamScoutMedia.shiftVtt(StreamScoutMedia.lingerVtt(await subtitleText(url), 1 + subtitleStretch / 100, subtitleExtra, subtitleGap), subtitleShift)); }
+    catch (cause) { showError(`Could not retime these subtitles: ${cause.message}`); }
     if (url !== subtitles.value) return;
   }
   const track = document.createElement('track'); track.kind = 'subtitles'; track.label = subtitles.options[subtitles.selectedIndex].text; track.src = src; track.default = true;
@@ -98,12 +105,12 @@ async function showSubtitle() {
   video.append(track);
 }
 // A new subtitle file or timing reaches the TV only with a fresh load; switching between loaded tracks does not need one,
-// unless the timing is shifted, since the TV holds a shifted copy of the previous track only.
+// unless the timing is changed, since the TV holds a retimed copy of the previous track only.
 async function applySubtitles(reloadTv) {
   await showSubtitle();
   syncCast();
   if (tv.classList.contains('hidden')) return;
-  if (reloadTv || (subtitleShift && subtitles.value)) castCommand('reload', { ...castLoad(), at: castTime });
+  if (reloadTv || (retimed() && subtitles.value)) castCommand('reload', { ...castLoad(), at: castTime });
   else castCommand('subtitle', castLoad().subtitleIndex);
 }
 subtitles.addEventListener('change', () => applySubtitles(false));
@@ -121,30 +128,57 @@ function setLook(change) {
   syncCast();
   if (!tv.classList.contains('hidden')) castCommand('style', StreamScoutMedia.castTextStyle(look));
 }
-function setShift(seconds) {
-  subtitleShift = Math.round(Math.min(Math.max(seconds, -600), 600) * 10) / 10;
-  subtitleShiftInput.value = `${subtitleShift > 0 ? '+' : ''}${subtitleShift.toFixed(1)}`;
-  document.querySelector('#subtitle-shift-reset').disabled = !subtitleShift;
+const signed = (value, digits) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
+function retime() {
   clearTimeout(shiftTimer);
   // Waits for the clicks to settle, since each change reloads the video on the TV; no change, no reload.
   shiftTimer = setTimeout(() => {
-    if (subtitleShift === appliedShift) return;
-    appliedShift = subtitleShift;
+    const timing = `${subtitleShift} ${subtitleStretch} ${subtitleExtra} ${subtitleGap}`;
+    if (timing === appliedTiming) return;
+    appliedTiming = timing;
     applySubtitles(true);
   }, 700);
+}
+function setShift(seconds) {
+  subtitleShift = Math.round(Math.min(Math.max(seconds, -600), 600) * 10) / 10;
+  subtitleShiftInput.value = signed(subtitleShift, 1);
+  document.querySelector('#subtitle-shift-reset').disabled = !subtitleShift;
+  retime();
+}
+function setLinger(stretch, extra, gap) {
+  subtitleStretch = Math.round(Math.min(Math.max(stretch, 0), 200));
+  subtitleExtra = Math.round(Math.min(Math.max(extra, 0), 10) * 10) / 10;
+  subtitleGap = Math.round(Math.min(Math.max(gap, 0), 1) * 100) / 100;
+  subtitleStretchInput.value = signed(subtitleStretch, 0);
+  subtitleExtraInput.value = signed(subtitleExtra, 1);
+  subtitleGapInput.value = subtitleGap.toFixed(2);
+  document.querySelector('#subtitle-linger-reset').disabled = !subtitleStretch && !subtitleExtra;
+  document.querySelector('#subtitle-gap-reset').disabled = !subtitleGap;
+  retime();
+}
+// Typed values may use a decimal comma, a minus sign or a trailing unit; anything unreadable keeps the current value.
+function bindStepper(input, attribute, step, get, set) {
+  document.querySelectorAll(`[data-${attribute}]`).forEach(button => button.addEventListener('click', () => set(get() + Number(button.getAttribute(`data-${attribute}`)))));
+  input.addEventListener('change', () => {
+    const typed = parseFloat(input.value.replace(',', '.').replace('−', '-'));
+    set(Number.isFinite(typed) ? typed : get());
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') input.blur();
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); set(get() + (event.key === 'ArrowUp' ? step : -step)); }
+  });
 }
 for (const [select, options, key] of [[subtitleSize, SUBTITLE_SIZES, 'size'], [subtitleColor, SUBTITLE_COLORS, 'color'], [subtitleBackground, SUBTITLE_BACKGROUNDS, 'background'], [subtitleFont, SUBTITLE_FONTS, 'font']]) {
   options.forEach(([value, label]) => select.append(new Option(label, String(value))));
   select.addEventListener('change', () => setLook({ [key]: key === 'size' ? Number(select.value) : select.value }));
 }
-document.querySelectorAll('[data-shift]').forEach(button => button.addEventListener('click', () => setShift(subtitleShift + Number(button.dataset.shift))));
+bindStepper(subtitleShiftInput, 'shift', 0.1, () => subtitleShift, setShift);
+bindStepper(subtitleStretchInput, 'stretch', 1, () => subtitleStretch, value => setLinger(value, subtitleExtra, subtitleGap));
+bindStepper(subtitleExtraInput, 'extra', 0.1, () => subtitleExtra, value => setLinger(subtitleStretch, value, subtitleGap));
+bindStepper(subtitleGapInput, 'gap', 0.05, () => subtitleGap, value => setLinger(subtitleStretch, subtitleExtra, value));
 document.querySelector('#subtitle-shift-reset').addEventListener('click', () => setShift(0));
-// Typed values may use a decimal comma, a minus sign or a trailing "s".
-subtitleShiftInput.addEventListener('change', () => setShift(Number(subtitleShiftInput.value.replace(',', '.').replace('−', '-').replace(/\s*s$/i, '')) || 0));
-subtitleShiftInput.addEventListener('keydown', event => {
-  if (event.key === 'Enter') subtitleShiftInput.blur();
-  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setShift(subtitleShift + (event.key === 'ArrowUp' ? 0.1 : -0.1)); }
-});
+document.querySelector('#subtitle-linger-reset').addEventListener('click', () => setLinger(0, 0, subtitleGap));
+document.querySelector('#subtitle-gap-reset').addEventListener('click', () => setLinger(subtitleStretch, subtitleExtra, 0));
 const subtitleMenuToggle = document.querySelector('#subtitle-menu-toggle');
 subtitleMenuToggle.addEventListener('click', () => {
   const open = subtitleMenuToggle.getAttribute('aria-expanded') !== 'true';
@@ -175,8 +209,38 @@ subtitleFile.addEventListener('change', async () => {
     if (!StreamScoutMedia.castSubtitleIndex(item.subtitles, url)) showError('This subtitle file is too large to send to the TV, so it shows only here.');
   } catch (cause) { showError(`Could not read ${file.name}: ${cause.message}`); }
 });
+// A pasted direct link (a download link, say) replaces the detected stream here and on the TV.
+document.querySelector('#link-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const url = StreamScoutMedia.pastedLink(document.querySelector('#link-input').value);
+  if (!url) return showError('Paste a full link that starts with http:// or https://.');
+  item = { ...(item || { subtitles: [] }), url, kind: 'video', qualities: [] };
+  quality.replaceChildren();
+  document.querySelector('#quality-wrap').classList.add('hidden');
+  document.querySelector('#quality-state').classList.remove('hidden');
+  error.classList.add('hidden');
+  if (!item.pageTitle && !item.label) document.querySelector('#title').textContent = document.title = StreamScoutMedia.titleFor(item);
+  setSource(url);
+  syncCast();
+});
 async function boot() {
+  video.addEventListener('error', () => {
+    document.querySelector('#loading').classList.add('hidden');
+    if (/\.m3u8|\.mpd/i.test(video.currentSrc)) showError('This browser cannot play this stream format.');
+    else showError('This browser cannot play this file. Casting may still work, since the TV has its own decoders.');
+  });
+  video.addEventListener('loadedmetadata', () => document.querySelector('#loading').classList.add('hidden'));
+  video.addEventListener('loadedmetadata', () => document.querySelector('#empty-state').classList.remove('hidden'));
+  video.addEventListener('playing', () => { document.querySelector('#loading').classList.add('hidden'); document.querySelector('#empty-state').classList.add('hidden'); });
+  video.addEventListener('pause', () => { if (video.currentTime === 0 && video.readyState > 0) document.querySelector('#empty-state').classList.remove('hidden'); });
+  video.addEventListener('error', () => { document.querySelector('#empty-state').classList.add('hidden'); });
   const token = location.hash.slice(1);
+  // Opened from the popup's link button, so there is no detected video yet: wait for a pasted link.
+  if (!token) {
+    document.querySelector('#empty-state').classList.add('hidden');
+    source.textContent = 'Paste a direct video link below';
+    return document.querySelector('#link-input').focus();
+  }
   const stored = await chrome.storage.session.get(`player:${token}`);
   item = stored[`player:${token}`];
   if (!item) return showError('This player link has expired.');
@@ -190,16 +254,6 @@ async function boot() {
     quality.addEventListener('change', () => setSource(quality.value));
   }
   addTracks(item.subtitles);
-  video.addEventListener('error', () => {
-    document.querySelector('#loading').classList.add('hidden');
-    if (/\.m3u8|\.mpd/i.test(video.currentSrc)) showError('This browser cannot play this stream format.');
-    else showError('This stream cannot be played here.');
-  });
-  video.addEventListener('loadedmetadata', () => document.querySelector('#loading').classList.add('hidden'));
-  video.addEventListener('loadedmetadata', () => document.querySelector('#empty-state').classList.remove('hidden'));
-  video.addEventListener('playing', () => { document.querySelector('#loading').classList.add('hidden'); document.querySelector('#empty-state').classList.add('hidden'); });
-  video.addEventListener('pause', () => { if (video.currentTime === 0 && video.readyState > 0) document.querySelector('#empty-state').classList.remove('hidden'); });
-  video.addEventListener('error', () => { document.querySelector('#empty-state').classList.add('hidden'); });
 }
 document.querySelector('#empty-state').addEventListener('click', () => video.play().catch(() => {}));
 const TAG = 'stream-scout';
@@ -219,6 +273,9 @@ let deviceNearby = false;
 const SPEED_REFUSED = 'Your TV does not support speed changes.';
 let seeking = false;
 let speedRefusedUntil = 0;
+let tvSpeed = 1;
+let tvSpeedTimer = 0;
+let tvSpeedSentAt = 0;
 const remoteVolume = document.querySelector('#remote-volume');
 let changingVolume = false;
 let volumeSentAt = 0;
@@ -283,7 +340,7 @@ function renderCast(status = {}) {
   remoteSeek.max = String(Math.floor(castDuration));
   if (!seeking) remoteSeek.value = String(Math.floor(castTime));
   paintSeek();
-  if (document.activeElement !== remoteSpeed) remoteSpeed.value = String(status.rate || 1);
+  if (document.activeElement !== remoteSpeed && !tvSpeedTimer && Date.now() - tvSpeedSentAt > 1500) { tvSpeed = status.rate || 1; remoteSpeed.value = tvSpeed.toFixed(2); }
   // Status arrives every second; rebuilding the open select would close it and undo the pick.
   const trackKey = JSON.stringify(status.tracks || []);
   if (trackKey !== remoteSubtitle.dataset.tracks) {
@@ -329,11 +386,17 @@ remoteSubtitle.addEventListener('change', () => {
   applySubtitles(false);
 });
 remoteSeek.addEventListener('input', () => { seeking = true; paintSeek(); });
-remoteSpeed.addEventListener('change', () => castCommand('speed', Number(remoteSpeed.value)));
-for (const select of [speed, remoteSpeed]) select.append(...StreamScoutMedia.speedOptions().map(option => new Option(option.label, String(option.value))));
-speed.value = remoteSpeed.value = '1';
+const clampSpeed = value => Math.round(Math.min(Math.max(value, 0.25), 4) * 100) / 100;
+let pcSpeed = 1;
 // The video element resets playbackRate on every new source; defaultPlaybackRate carries the pick across quality changes.
-speed.addEventListener('change', () => { video.defaultPlaybackRate = video.playbackRate = Number(speed.value); });
+bindStepper(speed, 'speed', 0.05, () => pcSpeed, value => { pcSpeed = clampSpeed(value); speed.value = pcSpeed.toFixed(2); video.defaultPlaybackRate = video.playbackRate = pcSpeed; });
+// Waits for the clicks to settle so the TV gets one speed change, and ignores the old rate it reports meanwhile.
+bindStepper(remoteSpeed, 'remote-speed', 0.05, () => tvSpeed, value => {
+  tvSpeed = clampSpeed(value);
+  remoteSpeed.value = tvSpeed.toFixed(2);
+  clearTimeout(tvSpeedTimer);
+  tvSpeedTimer = setTimeout(() => { tvSpeedTimer = 0; tvSpeedSentAt = Date.now(); castCommand('speed', tvSpeed); }, 500);
+});
 remoteSeek.addEventListener('change', () => { seeking = false; castCommand('seek', Number(remoteSeek.value)); });
 if (video.remote) {
   if (window.WebKitPlaybackTargetAvailabilityEvent) device.textContent = 'AirPlay';

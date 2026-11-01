@@ -18,13 +18,19 @@
         <span id="subtitles-state" class="state"><span>Subtitles</span><b>None found</b></span>
         <span class="state"><span>Own subtitles</span><button id="subtitle-add" type="button" title="Add an .srt or .vtt file from this PC">Add file…</button></span>
         <input id="subtitle-file" type="file" accept=".srt,.vtt" hidden>
+        <form id="link-form" class="state" title="Play a direct link instead, such as a download link. The TV fetches it without your login."><span>Video link</span><span class="link-row"><input id="link-input" type="text" inputmode="url" placeholder="Paste a direct link" autocomplete="off" spellcheck="false" aria-label="Direct video link"><button type="submit">Use</button></span></form>
         <span id="subtitle-tune" class="state hidden"><span>Adjust</span><button id="subtitle-menu-toggle" type="button" aria-expanded="false" aria-controls="subtitle-menu">Timing &amp; look</button></span>
-        <label><span>Speed</span><select id="speed"></select></label>
+        <span class="state"><span>Speed</span><span class="stepper" role="group" aria-label="Speed on this PC">
+          <button type="button" data-speed="-0.05" aria-label="Slower"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg></button>
+          <label class="stepper-value"><input id="speed" type="text" inputmode="decimal" value="1.00" autocomplete="off" spellcheck="false" aria-label="Speed on this PC"><span aria-hidden="true">×</span></label>
+          <button type="button" data-speed="0.05" aria-label="Faster"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+        </span></span>
         <span id="cast-off" class="state hidden" title="Casting needs Chromecast support, as in Chrome, Edge and Opera. In Opera, turn on Chromecast in settings."><span>Cast</span><b>Not available in this browser</b></span>
       </section>
       <section id="subtitle-menu" class="sub-menu hidden" aria-label="Subtitle timing and look">
-        <div class="sub-timing">
-          <span class="sub-label">Timing</span>
+        <div class="sub-group sub-timing" role="group" aria-labelledby="sub-timing-title">
+          <h2 id="sub-timing-title" class="sub-heading">Timing</h2>
+          <span class="sub-label">Delay</span>
           <div class="sub-shift">
             <div class="stepper" role="group" aria-label="Subtitle delay">
               <button type="button" data-shift="-0.5" aria-label="Show subtitles 0.5 seconds earlier"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg>Earlier</button>
@@ -33,12 +39,39 @@
             </div>
             <button id="subtitle-shift-reset" type="button" class="sub-reset" disabled>Reset</button>
           </div>
-          <p class="sub-hint">Steps of half a second. On the TV the video reloads at the same spot.</p>
+          <span class="sub-label">Stay longer</span>
+          <div class="sub-shift">
+            <div class="stepper" role="group" aria-label="Subtitle duration stretch">
+              <button type="button" data-stretch="-5" aria-label="5 percent shorter"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg></button>
+              <label class="stepper-value"><input id="subtitle-stretch" type="text" inputmode="decimal" value="+0" autocomplete="off" spellcheck="false" aria-label="Subtitle duration stretch in percent"><span aria-hidden="true">%</span></label>
+              <button type="button" data-stretch="5" aria-label="5 percent longer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+            </div>
+            <span class="sub-and" aria-hidden="true">+</span>
+            <div class="stepper" role="group" aria-label="Extra subtitle time">
+              <button type="button" data-extra="-0.1" aria-label="0.1 seconds less"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg></button>
+              <label class="stepper-value"><input id="subtitle-extra" type="text" inputmode="decimal" value="+0.0" autocomplete="off" spellcheck="false" aria-label="Extra subtitle time in seconds"><span aria-hidden="true">s</span></label>
+              <button type="button" data-extra="0.1" aria-label="0.1 seconds more"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+            </div>
+            <button id="subtitle-linger-reset" type="button" class="sub-reset" disabled>Reset</button>
+          </div>
+          <span class="sub-label">Pause between</span>
+          <div class="sub-shift">
+            <div class="stepper" role="group" aria-label="Pause between subtitle lines">
+              <button type="button" data-gap="-0.05" aria-label="Shorter pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg></button>
+              <label class="stepper-value"><input id="subtitle-gap" type="text" inputmode="decimal" value="0.00" autocomplete="off" spellcheck="false" aria-label="Pause between subtitle lines in seconds"><span aria-hidden="true">s</span></label>
+              <button type="button" data-gap="0.05" aria-label="Longer pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+            </div>
+            <button id="subtitle-gap-reset" type="button" class="sub-reset" disabled>Reset</button>
+          </div>
+          <p class="sub-hint">Stay longer stretches each line by the percentage plus the seconds. Without a pause a line never stays past the next one; with one, it pushes the next line up to 1 s later. On the TV the video reloads at the same spot.</p>
         </div>
-        <label><span>Font</span><select id="subtitle-font"></select></label>
-        <label><span>Size</span><select id="subtitle-size"></select></label>
-        <label><span>Color</span><select id="subtitle-color"></select></label>
-        <label><span>Background</span><select id="subtitle-background"></select></label>
+        <div class="sub-group sub-look" role="group" aria-labelledby="sub-look-title">
+          <h2 id="sub-look-title" class="sub-heading">Look</h2>
+          <label><span>Font</span><select id="subtitle-font"></select></label>
+          <label><span>Size</span><select id="subtitle-size"></select></label>
+          <label><span>Color</span><select id="subtitle-color"></select></label>
+          <label><span>Background</span><select id="subtitle-background"></select></label>
+        </div>
       </section>
       <section id="tv" class="tv hidden" aria-label="TV remote">
         <div class="tv-top">
@@ -64,7 +97,11 @@
               <input id="remote-volume" type="range" min="0" max="100" value="100" aria-label="TV volume">
             </div>
             <label class="tv-pick" title="Subtitles on TV"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1z"/></svg><select id="remote-subtitle" aria-label="Subtitles on TV"></select></label>
-            <label class="tv-pick" title="Speed on TV"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"/></svg><select id="remote-speed" aria-label="Speed on TV"></select></label>
+            <div class="stepper tv-speed" role="group" aria-label="Speed on TV" title="Speed on TV">
+              <button type="button" data-remote-speed="-0.05" aria-label="Slower on TV"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg></button>
+              <label class="stepper-value"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"/></svg><input id="remote-speed" type="text" inputmode="decimal" value="1.00" autocomplete="off" spellcheck="false" aria-label="Speed on TV"><span aria-hidden="true">×</span></label>
+              <button type="button" data-remote-speed="0.05" aria-label="Faster on TV"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+            </div>
           </div>
         </div>
       </section>

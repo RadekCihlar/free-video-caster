@@ -17,7 +17,8 @@
   function typeFor(url, kind) {
     if (kind === 'hls' || /\.m3u8(?:[?#]|$)/i.test(url)) return 'application/x-mpegURL';
     if (kind === 'dash' || /\.mpd(?:[?#]|$)/i.test(url)) return 'application/dash+xml';
-    if (/\.webm(?:[?#]|$)/i.test(url)) return 'video/webm';
+    // Cast lists no Matroska container; WebM is its documented subset, so .mkv goes out under that label.
+    if (/\.(webm|mkv)(?:[?#]|$)/i.test(url)) return 'video/webm';
     return 'video/mp4';
   }
 
@@ -37,7 +38,7 @@
     if (raw) return raw;
     try {
       const name = decodeURIComponent(new URL(item.url).pathname.split('/').pop() || '').replace(/\.(mp4|m4v|webm|mov|avi|mkv|m3u8|mpd)$/i, '').replace(/[._-]+/g, ' ').trim();
-      return /^(file|index|video)$/i.test(name) ? 'Selected video' : (name || 'Selected video');
+      return /^(file|index|video|download)$/i.test(name) ? 'Selected video' : (name || 'Selected video');
     } catch { return 'Selected video'; }
   }
 
@@ -74,17 +75,40 @@
     return `WEBVTT\n\n${cues}\n`;
   }
 
+  const CUE_TIMES = /^((?:\d+:)?\d{2}:\d{2}\.\d{3}) --> ((?:\d+:)?\d{2}:\d{2}\.\d{3})/gm;
+  const seconds = value => value.split(':').map(Number).reduce((sum, part) => sum * 60 + part, 0);
+  const stamp = total => {
+    const ms = Math.round(Math.max(0, total) * 1000);
+    const pad = (number, size = 2) => String(number).padStart(size, '0');
+    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
+  };
+
   // Moves the cue times of a WebVTT file; the receiver has no offset setting, so a shifted copy is cast instead.
-  function shiftVtt(vtt, seconds) {
-    if (!seconds) return vtt;
-    const stamp = value => {
-      const parts = value.split(':').map(Number);
-      const total = parts.reduce((sum, part) => sum * 60 + part, 0) + seconds;
-      const ms = Math.round(Math.max(0, total) * 1000);
-      const pad = (number, size = 2) => String(number).padStart(size, '0');
-      return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
-    };
-    return vtt.replace(/^((?:\d+:)?\d{2}:\d{2}\.\d{3}) --> ((?:\d+:)?\d{2}:\d{2}\.\d{3})/gm, (_, from, to) => `${stamp(from)} --> ${stamp(to)}`);
+  function shiftVtt(vtt, by) {
+    if (!by) return vtt;
+    return vtt.replace(CUE_TIMES, (_, from, to) => `${stamp(seconds(from) + by)} --> ${stamp(seconds(to) + by)}`);
+  }
+
+  // Keeps each cue up longer: its duration times `stretch`, plus `extra` seconds. Without a `gap` a cue lingers only
+  // until the next one starts, so lines do not stack. With one, a cue pushes the next later to leave that pause, by at
+  // most MAX_PUSH seconds so the lines never drift far from the speech. No cue ends before its original end.
+  const MAX_PUSH = 1;
+  function lingerVtt(vtt, stretch, extra, gap = 0) {
+    if (stretch === 1 && !extra && !gap) return vtt;
+    const cues = [...vtt.matchAll(CUE_TIMES)].map(match => ({ start: seconds(match[1]), end: seconds(match[2]) }));
+    let prev;
+    for (const cue of [...cues].sort((a, b) => a.start - b.start)) {
+      // A cue that overlaps the previous one in the original is shown alongside it, so it moves with it.
+      const together = prev && cue.start < prev.end;
+      const pause = together ? 0 : gap;
+      cue.from = !prev ? cue.start : together ? cue.start + prev.from - prev.start
+        : Math.min(Math.max(cue.start, prev.to + pause), cue.start + (gap ? MAX_PUSH : 0));
+      cue.to = cue.from + (cue.end - cue.start) * stretch + extra;
+      if (prev) prev.to = Math.max(prev.end + prev.from - prev.start, Math.min(prev.to, cue.from - pause));
+      prev = cue;
+    }
+    let index = 0;
+    return vtt.replace(CUE_TIMES, () => { const cue = cues[index++]; return `${stamp(cue.from)} --> ${stamp(cue.to)}`; });
   }
 
   // Colors on the receiver are #RRGGBBAA. Without a background box the text needs a shadow to stay readable.
@@ -154,11 +178,15 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${r}` : `${m}:${r}`;
   }
 
-  function speedOptions() {
-    return [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(value => ({ value, label: value === 1 ? 'Normal' : `${value}×` }));
+  // A pasted link goes into the video element and to the TV, so only web addresses pass.
+  function pastedLink(text) {
+    try {
+      const url = new URL(String(text || '').trim());
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+    } catch { return null; }
   }
 
-  const api = { SUBTITLE_FONTS, typeFor, pageTitle, titleFor, castableSubtitles, decodeSubtitle, toWebVtt, shiftVtt, castTextStyle, subtitleDataUrl, subtitleName, buildMedia, sdkFailure, playerStateFor, castSubtitleIndex, clock, speedOptions };
+  const api = { SUBTITLE_FONTS, typeFor, pastedLink, pageTitle, titleFor, castableSubtitles, decodeSubtitle, toWebVtt, shiftVtt, lingerVtt, castTextStyle, subtitleDataUrl, subtitleName, buildMedia, sdkFailure, playerStateFor, castSubtitleIndex, clock };
   root.StreamScoutMedia = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

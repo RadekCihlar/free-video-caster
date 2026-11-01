@@ -1,5 +1,5 @@
 (() => {
-  const mediaUrl = /\.(mp4|m4v|webm|mov|m3u8|mpd|vtt|srt|ttml|dfxp)(?:[?#]|$)/i;
+  const mediaUrl = /\.(mp4|m4v|webm|mov|avi|mkv|m3u8|mpd|vtt|srt|ttml|dfxp)(?:[?#]|$)/i;
   const emitted = new Set();
   function kindFor(url, key) {
     const value = `${url} ${key}`.toLowerCase();

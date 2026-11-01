@@ -83,6 +83,7 @@ function render(items) {
 }
 async function refresh() { activeTab = await currentTab(); render(await message({ type: 'getMedia', tabId: activeTab.id })); }
 document.querySelector('#refresh').addEventListener('click', refresh);
+document.querySelector('#open-player').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('player.html') }));
 document.querySelector('#now-play').addEventListener('click', () => castCommand('playPause'));
 document.querySelector('#now-stop').addEventListener('click', () => castCommand('stop'));
 document.querySelector('#now-disconnect').addEventListener('click', () => castCommand('disconnect'));

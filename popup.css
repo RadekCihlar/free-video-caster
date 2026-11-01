@@ -31,7 +31,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; bord
 .mark { flex: 0 0 auto; border-radius: 8px; }
 h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
 header p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-#refresh { margin-left: auto; }
+#open-player { margin-left: auto; }
 
 button, select { font: inherit; font-size: 13px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 select { min-width: 0; padding: 6px 8px; }
